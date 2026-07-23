@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 # Global imports
+import gzip
 import itertools
+import json
+import logging
 import re
+import ssl
+import urllib.request
 from typing import Union
 import textwrap
 from dataclasses import dataclass, field, fields
@@ -74,9 +79,28 @@ class KiSymbolDefaults(Enum):
     PIN_NUM_SIZE = 1.27
     PIN_NAME_SIZE = 1.27
     DEFAULT_BOX_LINE_WIDTH = 0
-    PROPERTY_FONT_SIZE = 1.27
+    PROPERTY_FONT_SIZE = 1.0
     FIELD_OFFSET_START = 5.08
     FIELD_OFFSET_INCREMENT = 2.54
+
+
+# PartHive: the symbol property (field) text height is configurable at runtime.
+# When left as None the upstream default (KiSymbolDefaults.PROPERTY_FONT_SIZE)
+# is used; the PartHive UI sets this to 1.27 mm by default.
+_PROPERTY_FONT_SIZE_OVERRIDE: float | None = None
+
+
+def set_property_font_size(size_mm: float | None) -> None:
+    """Override the symbol field text height (mm). Pass None to restore default."""
+    global _PROPERTY_FONT_SIZE_OVERRIDE
+    _PROPERTY_FONT_SIZE_OVERRIDE = size_mm
+
+
+def property_font_size() -> float:
+    """Return the effective symbol field text height in mm."""
+    if _PROPERTY_FONT_SIZE_OVERRIDE is not None:
+        return _PROPERTY_FONT_SIZE_OVERRIDE
+    return float(KiSymbolDefaults.PROPERTY_FONT_SIZE.value)
 
 
 def sanitize_fields(name: str) -> str:
@@ -135,6 +159,68 @@ def _make_property(
     )
 
 
+# JLCPCB component search API endpoint
+_JLCPCB_SEARCH_API = (
+    "https://jlcpcb.com/api/overseas-pcb-order/v1/shoppingCart/smtGood/"
+    "selectSmtComponentList"
+)
+
+
+def get_jlcpcb_part_details(lcsc_id: str) -> dict:
+    """Fetch part details from the JLCPCB component search API.
+
+    Returns a dict with keys: datasheet_url, lcsc_url, part_url,
+    manufacturer_name, description.  Returns an empty dict on failure.
+    """
+    payload = json.dumps(
+        {"keyword": lcsc_id, "currentPage": 1, "pageSize": 1}
+    ).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept-Encoding": "gzip, deflate",
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Origin": "https://jlcpcb.com",
+        "Referer": "https://jlcpcb.com/parts",
+    }
+    try:
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(  # noqa: S310
+            url=_JLCPCB_SEARCH_API, data=payload, headers=headers
+        )
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as response:  # noqa: S310
+            raw_bytes: bytes = response.read()
+        raw_text = (
+            gzip.decompress(raw_bytes).decode("utf-8")
+            if raw_bytes[:2] == b"\x1f\x8b"
+            else raw_bytes.decode("utf-8")
+        )
+        data: dict = json.loads(raw_text)
+    except Exception as exc:
+        logging.warning(f"JLCPCB fetch failed for {lcsc_id}: {exc}")
+        return {}
+
+    page_info: dict = (data.get("data") or {}).get("componentPageInfo") or {}
+    items: list = page_info.get("list") or []
+    if not items:
+        return {}
+
+    item = items[0]
+    url_match = item.get("urlSuffix", "")
+    if url_match:
+            cleaned_url_suffix = url_match.split('\\')[0]  # Get the part before the backslash
+
+    return {
+        "datasheet_url": item.get("dataManualUrl", ""),
+        "lcsc_url": item.get("lcscGoodsUrl", ""),
+        "part_url": f"https://jlcpcb.com/partdetail/{cleaned_url_suffix}",
+        "manufacturer_name": item.get("componentBrandEn", ""),
+        "description": item.get("describe", ""),
+    }
+
+
 # ---------------- INFO HEADER ----------------
 @dataclass
 class KiSymbolInfo:
@@ -156,6 +242,11 @@ class KiSymbolInfo:
             "Description" if version >= KICAD_SYM_VERSION_20230620 else "ki_description"
         )
 
+        # Fetch supplemental data from JLCPCB
+        jlcpcb: dict = {}
+        if self.lcsc_id:
+            jlcpcb = get_jlcpcb_part_details(self.lcsc_id)
+
         field_offset_y = KiSymbolDefaults.FIELD_OFFSET_START.value
         header: list[str] = [
             _make_property(
@@ -163,7 +254,7 @@ class KiSymbolInfo:
                 value=self.prefix,
                 id_=0,
                 pos_y=self.y_high + field_offset_y,
-                font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
+                font_size=property_font_size(),  # PartHive: configurable field text size
                 style="",
                 hide="",
                 version=version,
@@ -173,7 +264,7 @@ class KiSymbolInfo:
                 value=self.name,
                 id_=1,
                 pos_y=self.y_low - field_offset_y,
-                font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
+                font_size=property_font_size(),  # PartHive: configurable field text size
                 style="",
                 hide="",
                 version=version,
@@ -187,35 +278,86 @@ class KiSymbolInfo:
                     value=self.package,
                     id_=2,
                     pos_y=self.y_low - field_offset_y,
-                    font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
+                    font_size=property_font_size(),  # PartHive: configurable field text size
                     style="",
                     hide="hide",
                     version=version,
                 )
             )
-        if self.datasheet:
+        # Datasheet: prefer JLCPCB data, fall back to EasyEDA
+        datasheet = jlcpcb.get("datasheet_url") or self.datasheet
+        if datasheet:
             field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
             header.append(
                 _make_property(
                     key="Datasheet",
-                    value=self.datasheet,
+                    value=datasheet,
                     id_=3,
                     pos_y=self.y_low - field_offset_y,
-                    font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
+                    font_size=property_font_size(),  # PartHive: configurable field text size
                     style="",
                     hide="hide",
                     version=version,
                 )
             )
-        if self.manufacturer:
+        # Description: prefer JLCPCB data, fall back to EasyEDA
+        description = jlcpcb.get("description") or self.description
+        if description:
+            field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
+            header.append(
+                _make_property(
+                    key=description_key,
+                    value=description,
+                    id_=4,
+                    pos_y=self.y_low - field_offset_y,
+                    font_size=property_font_size(),  # PartHive: configurable field text size
+                    style="",
+                    hide="hide",
+                    version=version,
+                )
+            )
+        # JLCPCB Part # — JLCPCB search URL
+        jlcpcb_url = jlcpcb.get("part_url", "")
+        if jlcpcb_url:
+            field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
+            header.append(
+                _make_property(
+                    key="JLCPCB Part #",
+                    value=jlcpcb_url,
+                    id_=6,
+                    pos_y=self.y_low - field_offset_y,
+                    font_size=property_font_size(),  # PartHive: configurable field text size
+                    style="",
+                    hide="hide",
+                    version=version,
+                )
+            )
+        # JLCPCB/EasyEDA Part — ID
+        if self.lcsc_id:
+            field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
+            header.append(
+                _make_property(
+                    key="JLCPCB Part ID",
+                    value=self.lcsc_id,
+                    id_=7,
+                    pos_y=self.y_low - field_offset_y,
+                    font_size=property_font_size(),  # PartHive: configurable field text size
+                    style="",
+                    hide="hide",
+                    version=version,
+                )
+            )
+        # Manufacturer: prefer JLCPCB data, fall back to EasyEDA
+        manufacturer = jlcpcb.get("manufacturer_name") or self.manufacturer
+        if manufacturer:
             field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
             header.append(
                 _make_property(
                     key="Manufacturer",
-                    value=self.manufacturer,
-                    id_=4,
+                    value=manufacturer,
+                    id_=8,
                     pos_y=self.y_low - field_offset_y,
-                    font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
+                    font_size=property_font_size(),  # PartHive: configurable field text size
                     style="",
                     hide="hide",
                     version=version,
@@ -227,74 +369,14 @@ class KiSymbolInfo:
                 _make_property(
                     key="MPN",
                     value=self.mpn,
-                    id_=5,
-                    pos_y=self.y_low - field_offset_y,
-                    font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
-                    style="",
-                    hide="hide",
-                    version=version,
-                )
-            )
-        if self.lcsc_id:
-            field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
-            header.append(
-                _make_property(
-                    key="LCSC Part",
-                    value=self.lcsc_id,
-                    id_=6,
-                    pos_y=self.y_low - field_offset_y,
-                    font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
-                    style="",
-                    hide="hide",
-                    version=version,
-                )
-            )
-        if self.keywords:
-            field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
-            header.append(
-                _make_property(
-                    key="ki_keywords",
-                    value=self.keywords,
-                    id_=8,
-                    pos_y=self.y_low - field_offset_y,
-                    font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
-                    style="",
-                    hide="hide",
-                    version=version,
-                )
-            )
-        if self.description:
-            field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
-            header.append(
-                _make_property(
-                    key=description_key,
-                    value=self.description,
                     id_=9,
                     pos_y=self.y_low - field_offset_y,
-                    font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
+                    font_size=property_font_size(),  # PartHive: configurable field text size
                     style="",
                     hide="hide",
                     version=version,
                 )
             )
-
-        # Built-in property IDs 0–9 are reserved; custom fields start at 10
-        property_id = 10
-        for key, value in self.custom_fields.items():
-            field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
-            header.append(
-                _make_property(
-                    key=key,
-                    value=value,
-                    id_=property_id,
-                    pos_y=self.y_low - field_offset_y,
-                    font_size=KiSymbolDefaults.PROPERTY_FONT_SIZE.value,
-                    style="",
-                    hide="hide",
-                    version=version,
-                )
-            )
-            property_id += 1
 
         return header
 
@@ -494,7 +576,7 @@ class KiSymbolText:
     pos_x: float = 0.0
     pos_y: float = 0.0
     rotation: float = 0.0
-    font_size: float = 1.27  # mm
+    font_size: float = 1.0  # mm
 
     def export(self, version: int = KICAD_SYM_VERSION_20211014) -> str:
         return """

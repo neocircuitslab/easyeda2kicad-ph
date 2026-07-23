@@ -12,17 +12,20 @@ KI_DESCRIPTION = (
 )
 KI_TAGS_INFO = '\t(tags "{tag}")\n'
 KI_FP_TYPE = "\t(attr {component_type})\n"
+# PartHive modification: the reference text and the footprint text size/thickness
+# are parametrized. The reference defaults to "?" (upstream used the literal
+# "REF**") and the font size defaults to 1.0 mm (upstream hard-coded 0.8 mm).
 KI_REFERENCE = (
-    "\t(fp_text reference REF** (at {pos_x:.3f} {pos_y:.3f}) (layer F.SilkS)\n\t\t(effects"
-    " (font (size 1 1) (thickness 0.15)))\n\t)\n"
+    "\t(fp_text reference {ref} (at {pos_x:.3f} {pos_y:.3f}) (layer F.SilkS)\n\t\t(effects"
+    " (font (size {size:.3f} {size:.3f}) (thickness {thickness:.3f})))\n\t)\n"
 )
 KI_PACKAGE_VALUE = (
     "\t(fp_text value {package_name} (at {pos_x:.3f} {pos_y:.3f}) (layer F.Fab)\n\t\t(effects"
-    " (font (size 1 1) (thickness 0.15)))\n\t)\n"
+    " (font (size {size:.3f} {size:.3f}) (thickness {thickness:.3f})))\n\t)\n"
 )
 KI_FAB_REF = (
-    "\t(fp_text user %R (at 0 0) (layer F.Fab)\n\t\t(effects (font (size 1 1)"
-    " (thickness 0.15)))\n\t)\n"
+    "\t(fp_text user %R (at 0 0) (layer F.Fab)\n\t\t(effects (font (size {size:.3f} {size:.3f})"
+    " (thickness {thickness:.3f})))\n\t)\n"
 )
 KI_END_FILE = ")"
 

@@ -587,9 +587,14 @@ class ExporterFootprintKicad:
         footprint_full_path: str,
         model_3d_path: str,
         model_3d_extension: str = "wrl",
+        reference: str = "?",  # PartHive: footprint reference text (upstream: "REF**")
+        text_size: float = 1.0,  # PartHive: footprint text height in mm (upstream: 0.8)
     ) -> None:
         ki = self.output
         ki_lib = ""
+        # PartHive: derive a proportional stroke thickness (~15% of height, the
+        # KiCad default ratio) so text stays legible at any configured size.
+        text_thickness = round(text_size * 0.15, 4)
 
         ki_lib += KI_MODULE_INFO.format(
             package_lib="easyeda2kicad", package_name=ki.info.name, edit="5DC5F6A4"
@@ -606,12 +611,18 @@ class ExporterFootprintKicad:
         y_low = min((pad.pos_y for pad in ki.pads), default=0)
         y_high = max((pad.pos_y for pad in ki.pads), default=0)
 
-        ki_lib += KI_REFERENCE.format(pos_x=0.0, pos_y=y_low - 4)
+        ki_lib += KI_REFERENCE.format(
+            ref=reference, pos_x=0.0, pos_y=y_low - 4, size=text_size, thickness=text_thickness
+        )
 
         ki_lib += KI_PACKAGE_VALUE.format(
-            package_name=ki.info.name, pos_x=0.0, pos_y=y_high + 4
+            package_name=ki.info.name,
+            pos_x=0.0,
+            pos_y=y_high + 4,
+            size=text_size,
+            thickness=text_thickness,
         )
-        ki_lib += KI_FAB_REF
+        ki_lib += KI_FAB_REF.format(size=text_size, thickness=text_thickness)
 
         if ki.info.lcsc_id:
             ki_lib += f'\t(property "LCSC Part" "{ki.info.lcsc_id}")\n'

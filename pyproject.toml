@@ -1,51 +1,34 @@
-[tool.isort]
-profile = "black"
-extend_skip = [".md", ".json", ".po", ".mo",".html", ".js", ".css", ".rst"]
-skip_glob = ["env/*"]
-known_local_folder = ["core"]
-import_heading_stdlib="Global imports"
-import_heading_localfolder="Local imports"
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
-# https://mypy.readthedocs.io/en/stable/config_file.html
-[tool.mypy]
-python_version = "3.9"
-explicit_package_bases = true
-ignore_missing_imports = true
-check_untyped_defs = true
-disallow_any_expr = false
-disallow_untyped_calls = false
-ignore_errors = false
-show_error_codes = true
-pretty = true
-
-[tool.pylint.master]
-output-format = "colorized"
-extension-pkg-whitelist = []
-ignore="(.eggs|.git|.hg|.mypy_cache|__pycache__|.nox|.tox|.venv|.svn|buck-out|build|dist|env|)/"
-
-[tool.pylint.format]
-max-line-length = 88
-
-[tool.pylint.messages_control]
-disable = [
-    "wrong-import-order",
-    "method-hidden",
-    "too-many-lines",
-    "wildcard-import",
-    "missing-module-docstring",
-    "missing-class-docstring",
-    "missing-function-docstring",
-    "logging-fstring-interpolation",
+[project]
+name = "easyeda2kicad-ph"
+dynamic = ["version"]
+description = "EasyEDA / JLCPCB (LCSC) to KiCad converter — a PartHive fork of uPesy/easyeda2kicad.py (configurable footprint reference, text sizes, symbol-to-footprint library linking; pure standard library)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "AGPL-3.0-or-later" }
+authors = [
+    { name = "uPesy", email = "contact@upesy.com" },
 ]
-
-[tool.ruff]
-target-version = "py39"
-
-[tool.ruff.lint]
-select = ["S"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**" = [
-    "S101",  # assert is expected and correct in pytest tests
-    "S108",  # /tmp/... strings in tests are regex patterns, not real paths
+maintainers = [
+    { name = "NeoCircuitsLab" },
 ]
+keywords = ["easyeda", "kicad", "lcsc", "jlcpcb", "converter", "parthive"]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/neocircuitslab/easyeda2kicad-ph"
+Upstream = "https://github.com/uPesy/easyeda2kicad.py"
+
+[tool.setuptools.dynamic]
+version = { attr = "easyeda2kicad_ph._version.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["easyeda2kicad_ph*"]
