@@ -174,6 +174,7 @@ class EasyedaApi:
                     f"Invalid cached JSON for {lcsc_id}, fetching fresh data"
                 )
 
+        self.last_error = None  # PartHive: see below
         try:
             req = urllib.request.Request(  # noqa: S310
                 url=API_ENDPOINT.format(lcsc_id=lcsc_id), headers=self.headers
@@ -198,6 +199,9 @@ class EasyedaApi:
             return api_response
         except (urllib.error.URLError, json.JSONDecodeError) as e:
             logging.error(f"API request failed: {e}")
+            # PartHive: remember why, so the plugin can tell the user (e.g. HTTP 403
+            # when EasyEDA limits how many parts are fetched in a short time).
+            self.last_error = e
             return {}
 
     def get_cad_data_of_component(self, lcsc_id: str) -> dict[str, Any]:

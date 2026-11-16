@@ -207,15 +207,18 @@ def get_jlcpcb_part_details(lcsc_id: str) -> dict:
     if not items:
         return {}
 
-    item = items[0]
-    url_match = item.get("urlSuffix", "")
-    if url_match:
-            cleaned_url_suffix = url_match.split('\\')[0]  # Get the part before the backslash
+    # The search is a keyword search: prefer the row whose code is exactly ours.
+    item = next(
+        (it for it in items if str(it.get("componentCode", "")).upper() == lcsc_id.upper()),
+        items[0],
+    )
+    url_suffix = str(item.get("urlSuffix", "") or "").split("\\")[0].strip("/ ")
 
     return {
         "datasheet_url": item.get("dataManualUrl", ""),
         "lcsc_url": item.get("lcscGoodsUrl", ""),
-        "part_url": f"https://jlcpcb.com/partdetail/{cleaned_url_suffix}",
+        # PartHive: no suffix -> leave empty; the caller falls back to a search link.
+        "part_url": f"https://jlcpcb.com/partdetail/{url_suffix}" if url_suffix else "",
         "manufacturer_name": item.get("componentBrandEn", ""),
         "description": item.get("describe", ""),
     }
@@ -316,14 +319,13 @@ class KiSymbolInfo:
                     version=version,
                 )
             )
-        # JLCPCB Part # — JLCPCB search URL
-        jlcpcb_url = jlcpcb.get("part_url", "")
-        if jlcpcb_url:
+        # PartHive: "LCSC Part #" holds the C number (e.g. C25804).
+        if self.lcsc_id:
             field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
             header.append(
                 _make_property(
-                    key="JLCPCB Part #",
-                    value=jlcpcb_url,
+                    key="LCSC Part #",
+                    value=self.lcsc_id,
                     id_=6,
                     pos_y=self.y_low - field_offset_y,
                     font_size=property_font_size(),  # PartHive: configurable field text size
@@ -332,13 +334,19 @@ class KiSymbolInfo:
                     version=version,
                 )
             )
-        # JLCPCB/EasyEDA Part — ID
-        if self.lcsc_id:
+        # PartHive: "JLCPCB Link" holds the JLCPCB part-page link. If the
+        # JLCPCB lookup failed, fall back to a JLCPCB search link for the C number.
+        jlcpcb_url = jlcpcb.get("part_url", "") or (
+            f"https://jlcpcb.com/parts/componentSearch?searchTxt={self.lcsc_id}"
+            if self.lcsc_id
+            else ""
+        )
+        if jlcpcb_url:
             field_offset_y += KiSymbolDefaults.FIELD_OFFSET_INCREMENT.value
             header.append(
                 _make_property(
-                    key="JLCPCB Part ID",
-                    value=self.lcsc_id,
+                    key="JLCPCB Link",
+                    value=jlcpcb_url,
                     id_=7,
                     pos_y=self.y_low - field_offset_y,
                     font_size=property_font_size(),  # PartHive: configurable field text size
